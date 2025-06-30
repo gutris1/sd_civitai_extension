@@ -1,38 +1,63 @@
+from modules import shared, sd_models, sd_vae, hashes, ui_extra_networks, cache
+from modules.paths import models_path
 from datetime import datetime
 from pathlib import Path
 from typing import List
 from tqdm import tqdm
-import gradio as gr
-import filetype
+from PIL import Image
+import tempfile
 import requests
+import shutil
+import glob
 import json
 import time
-import glob
-import io
 import os
-import re
+import io
 
-from modules import shared, sd_models, sd_vae, hashes, ui_extra_networks, errors, cache
-from modules.paths import models_path
-
-base_url = shared.cmd_opts.civitai_endpoint
+base_url = 'https://civitai.com/api/v1'
 user_agent = 'CivitaiLink:Automatic1111'
 download_chunk_size = 8192
-bar_format = '{l_bar}{bar:25}{r_bar}{bar:-10b}'
-
-image_extensions = ['.jpeg', '.png', '.jpg', '.gif', '.webp', '.avif']
-preview_extensions = image_extensions + ['.mp4', '.webm']
 civil_ai_api_cache = cache.cache('civil_ai_api_sha256')
+KAGGLE = 'KAGGLE_DATA_PROXY_TOKEN' in os.environ
 
+RST = '\033[0m'
+BLUE = '\033[38;5;39m'
 
-# endregion
-# region Utils
 def log(message):
-    """Log a message to the console."""
-    print(f'Civitai: {message}')
+    print(f'{BLUE}●{RST} Civitai: {message}')
 
+def download_file(url, dest, on_progress=None):
+    if os.path.exists(dest): return
 
-# region API
+    response = requests.get(url, stream=True, headers={"User-Agent": user_agent})
+    total = int(response.headers.get('content-length', 0))
+    start_time = time.time()
+
+    dest = os.path.expanduser(dest)
+    dst_dir = os.path.dirname(dest)
+    f = tempfile.NamedTemporaryFile(delete=False, dir=dst_dir)
+
+    try:
+        current = 0
+        with tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024) as bar:
+            for data in response.iter_content(chunk_size=download_chunk_size):
+                current += len(data)
+                pos = f.write(data)
+                bar.update(pos)
+                if on_progress is not None:
+                    should_stop = on_progress(current, total, start_time)
+                    if should_stop == True:
+                        raise Exception('Download cancelled')
+        f.close()
+        shutil.move(f.name, dest)
+    except OSError as e:
+       print(f"Could not write the preview file to {dst_dir}")
+       print(e)
+    finally:
+        f.close()
+        if os.path.exists(f.name):
+            os.remove(f.name)
+
 def req(endpoint, method='GET', data=None, params=None, headers=None):
     """Make a request to the Civitai API."""
     if headers is None:
@@ -48,19 +73,18 @@ def req(endpoint, method='GET', data=None, params=None, headers=None):
         endpoint = '/' + endpoint
     if params is None:
         params = {}
-    response = requests.request(method, base_url + endpoint, data=data, params=params, headers=headers)
+    response = requests.request(method, base_url+endpoint, data=data, params=params, headers=headers)
     if response.status_code != 200:
         raise Exception(f'Error: {response.status_code} {response.text}')
     return response.json()
 
-
-def get_models(query, creator, tag, file_type, page=1, page_size=20, sort='Most Downloaded', period='AllTime'):
+def get_models(query, creator, tag, type, page=1, page_size=20, sort='Most Downloaded', period='AllTime'):
     """Get a list of models from the Civitai API."""
     response = req('/models', params={
         'query': query,
         'username': creator,
         'tag': tag,
-        'type': file_type,
+        'type': type,
         'sort': sort,
         'period': period,
         'page': page,
@@ -68,50 +92,18 @@ def get_models(query, creator, tag, file_type, page=1, page_size=20, sort='Most 
     })
     return response
 
-
-def get_all_by_hash(file_hashes: List[str]):
-    response = req(f"/model-versions/by-hash", method='POST', data=file_hashes)
+def get_all_by_hash(hashes: List[str]):
+    response = req(f"/model-versions/by-hash", method='POST', data=hashes)
     return response
 
-
-def get_all_by_hash_with_cache(file_hashes: List[str]):
-    """"Un-finished function"""
-
-    # cached_info_hashes = [file_hash for file_hash in file_hashes if file_hash in metadata_cache_dict]
-    missing_info_hashes = [file_hash for file_hash in file_hashes if file_hash not in civil_ai_api_cache]
-    new_results = []
-    try:
-        for i in range(0, len(missing_info_hashes), 100):
-            batch = missing_info_hashes[i:i + 100]
-            new_results.extend(get_all_by_hash(batch))
-
-    except Exception as e:
-        errors.report('Failed to fetch info from Civitai', exc_info=True)
-        raise e
-
-    new_results = sorted(new_results, key=lambda x: datetime.fromisoformat(x['createdAt'].rstrip('Z')), reverse=True)
-
-    found_info_hashes = set()
-    for new_metadata in new_results:
-        for file in new_metadata['files']:
-            file_hash = file['hashes']['SHA256'].lower()
-            found_info_hashes.add(file_hash)
-    for file_hash in set(missing_info_hashes) - found_info_hashes:
-        if file_hash not in civil_ai_api_cache:
-            civil_ai_api_cache[file_hash] = None
-    return new_results
-
-
-def get_model_version(_id):
+def get_model_version(id):
     """Get a model version from the Civitai API."""
-    response = req('/model-versions/' + _id)
+    response = req('/model-versions/'+id)
     return response
 
-
-def get_model_version_by_hash(file_hash: str):
-    response = req(f"/model-versions/by-hash/{file_hash}")
+def get_model_version_by_hash(hash: str):
+    response = req(f"/model-versions/by-hash/{hash}")
     return response
-
 
 def get_creators(query, page=1, page_size=20):
     """Get a list of creators from the Civitai API."""
@@ -122,7 +114,6 @@ def get_creators(query, page=1, page_size=20):
     })
     return response
 
-
 def get_tags(query, page=1, page_size=20):
     """Get a list of tags from the Civitai API."""
     response = req('/tags', params={
@@ -131,7 +122,6 @@ def get_tags(query, page=1, page_size=20):
         'pageSize': page_size
     })
     return response
-
 
 def get_lora_dir():
     return shared.cmd_opts.lora_dir
@@ -146,7 +136,6 @@ def get_locon_dir():
 
 def get_model_dir():
     return shared.cmd_opts.ckpt_dir or sd_models.model_path
-
 
 def get_automatic_type(file_type: str):
     if file_type == 'Hypernetwork':
@@ -168,7 +157,6 @@ def get_automatic_name(file_type: str, filename: str, folder: str):
         return fullname
     return os.path.splitext(fullname)[0]
 
-
 def has_preview(filename: str):
     ui_extra_networks.allowed_preview_extensions()
     preview_exts = ui_extra_networks.allowed_preview_extensions()
@@ -181,7 +169,6 @@ def has_preview(filename: str):
 
 def has_info(filename: str):
     return os.path.isfile(os.path.splitext(filename)[0] + '.json')
-
 
 def get_resources_in_folder(file_type, folder, exts=None, exts_exclude=None):
     if exts_exclude is None:
@@ -216,9 +203,33 @@ def get_resources_in_folder(file_type, folder, exts=None, exts_exclude=None):
         shared.cmd_opts.no_hashing = cmd_opts_no_hashing
     return _resources
 
+def get_all_by_hash_with_cache(file_hashes: List[str]):
+    """"Un-finished function"""
+
+    # cached_info_hashes = [file_hash for file_hash in file_hashes if file_hash in metadata_cache_dict]
+    missing_info_hashes = [file_hash for file_hash in file_hashes if file_hash not in civil_ai_api_cache]
+    new_results = []
+    try:
+        for i in range(0, len(missing_info_hashes), 100):
+            batch = missing_info_hashes[i:i + 100]
+            new_results.extend(get_all_by_hash(batch))
+
+    except Exception as e:
+        raise e
+
+    new_results = sorted(new_results, key=lambda x: datetime.fromisoformat(x['createdAt'].rstrip('Z')), reverse=True)
+
+    found_info_hashes = set()
+    for new_metadata in new_results:
+        for file in new_metadata['files']:
+            file_hash = file['hashes']['SHA256'].lower()
+            found_info_hashes.add(file_hash)
+    for file_hash in set(missing_info_hashes) - found_info_hashes:
+        if file_hash not in civil_ai_api_cache:
+            civil_ai_api_cache[file_hash] = None
+    return new_results
 
 resources = []
-
 
 def load_resource_list(types=None):
     global resources
@@ -255,93 +266,69 @@ def load_resource_list(types=None):
 
     return resources
 
-
 def get_model_by_hash(file_hash: str):
     if found := [info for info in sd_models.checkpoints_list.values() if file_hash == info.sha256 or file_hash == info.shorthash or file_hash == info.hash]:
         return found[0]
 
+def get_resource_by_hash(hash: str):
+    resources = load_resource_list([])
 
-modified_url_re = re.compile(r'/width=\d+/')
-re_uuid_v4 = re.compile(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/).*')
+    found = [resource for resource in resources if hash.lower() == resource['hash'] and ('downloading' not in resource or resource['downloading'] != True)]
+    if found:
+        return found[0]
 
+    return None
 
-IMG_CONTENT_TYPE_MAP = {
-    'image/x-icon': '.ico',
-}
+def resizer(b, size=512):
+    i = Image.open(io.BytesIO(b))
+    w, h = i.size
+    s = (size, int(h * size / w)) if w > h else (int(w * size / h), size)
+    o = io.BytesIO()
+    i.resize(s, Image.LANCZOS).save(o, format='PNG')
+    o.seek(0)
+    return o
 
+def download_preview(url, dest_path, on_progress=None):
+    dest = Path(dest_path).expanduser()
+    if dest.exists(): return
 
-def get_request_stream(url):
-    response = None
-    while True:
-        for i in range(3):
-            response = requests.get(url, stream=True, headers={"User-Agent": user_agent})
-            if response.status_code == 200:
-                return response
-            time.sleep(1)
-
-        if response.status_code != 200:
-            return response
-            user_input = input('Press Enter to retry, Enter "s" to skip: ').strip()
-            if user_input.strip().lower() == 's':
-                return response
-            elif user_input:
-                url = user_input
-                print(f"Retrying with new URL: {url}")
-
-
-def test_image_type(image_path):
-    try:
-        return f'.{filetype.guess(image_path).extension}'
-    except Exception as e:
-        pass
-
-
-def download_image_auto_file_type(url, dest, total_pbar: tqdm = None):
-    dest = Path(dest)
-
-    original_true_url = re_uuid_v4.sub(r'\1original=true', url)
-    # log(f'Downloading: "{original_true_url}" to {dest.with_suffix("")}')
-    if total_pbar is not None:
-        total_pbar.set_postfix_str(f'{original_true_url} -> {dest.with_suffix("")}')
-    response = get_request_stream(original_true_url)
-    # print('\n\ntest error')
-    if response.status_code != 200:
-        print('\n')
-        log(f'Failed to download {original_true_url} {response.status_code}')
-        return
-
-    content_type = response.headers.get('Content-Type', '')
-    file_extension = IMG_CONTENT_TYPE_MAP.get(content_type, f'.{content_type.rpartition("/")[2]}')
-    dest = dest.with_suffix(file_extension)
+    response = requests.get(url, stream=True, headers={"User-Agent": user_agent})
     total = int(response.headers.get('content-length', 0))
-    with io.BytesIO() as file_like_object:
-        try:
-            current = 0
-            with tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, dynamic_ncols=True, bar_format=bar_format, leave=False) as bar:
-                for data in response.iter_content(chunk_size=download_chunk_size):
-                    current += len(data)
-                    file_like_object.write(data)
-                    bar.update(len(data))  # Update with the length of the data written
+    start_time = time.time()
 
-        except Exception as e:
-            print('\n')
-            log(f'Failed to download {original_true_url} {e}')
+    try:
+        image_data = bytearray()
+        current = 0
+        for data in response.iter_content(chunk_size=download_chunk_size):
+            image_data.extend(data)
+            current += len(data)
+            if on_progress is not None:
+                should_stop = on_progress(current, total, start_time)
+                if should_stop:
+                    raise Exception("Download cancelled")
 
-        try:
-            real_img_type = test_image_type(file_like_object)
-            if real_img_type is not None:
-                dest = dest.with_suffix(real_img_type)
+        resized = resizer(image_data)
 
-            if dest.exists():
-                override_choice = input(f"\nFile already exists: {str(dest)}overwrite Y/N?\n").strip().lower()
-                if override_choice.strip() != 'y':
-                    return
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(file_like_object.getvalue())
-            if dest.suffix not in preview_extensions:
-                message = f'Warning: Not unexpected file type {str(dest)}\nPress Enter to continue'
-                gr.Warning(message)
-                input(f'\n{message}\nPress Enter to continue')
-        except Exception as e:
-            print(f'\n')
-            log(f'Failed to download {original_true_url} {e}')
+        if KAGGLE:
+            import sd_image_encryption # type: ignore
+
+            img = Image.open(resized)
+            imginfo = img.info or {}
+            if not all(k in imginfo for k in ['Encrypt', 'EncryptPwdSha']):
+                sd_image_encryption.EncryptedImage.from_image(img).save(dest)
+        else:
+            dest.write_bytes(resized.read())
+
+    except Exception as e:
+        print(f"Preview failed: {dest} : {e}")
+        if dest.exists():
+            dest.unlink()
+
+def update_resource_preview(hash: str, preview_url: str):
+    resources = load_resource_list([])
+    matches = [resource for resource in resources if hash.lower() == resource['hash']]
+    if len(matches) == 0: return
+
+    for resource in matches:
+        preview_path = os.path.splitext(resource['path'])[0] + '.preview.png'
+        download_preview(preview_url, preview_path)
