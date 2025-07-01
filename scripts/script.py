@@ -21,63 +21,92 @@ def get_resources(k: str):
     return missing, hashes, results
 
 def load_info():
-    missing, hashes, results = get_resources('hasInfo')
-    if results is None: return
+    resources = civitai.load_resource_list()
+    hashes = [r['hash'] for r in resources]
+    results = civitai.get_all_by_hash_with_cache(hashes)
+    if not results: return
 
     N = 0
+    map = {r['hash']: r for r in resources}
+
+    baseList = {
+        'SD 1': 'SD1',
+        'SD 1.5': 'SD1',
+        'SD 2': 'SD2',
+        'SD 3': 'SD3',
+        'SDXL': 'SDXL',
+        'Pony': 'SDXL',
+        'Illustrious': 'SDXL',
+    }
 
     for r in results:
-        if (r is None): continue
+        if r is None: continue
 
         for f in r['files']:
-            if not 'hashes' in f or not 'SHA256' in f['hashes']: continue
-            h = f['hashes']['SHA256']
-            if h.lower() not in hashes: continue
+            if 'hashes' not in f or 'SHA256' not in f['hashes']: continue
 
-            base_model = {
-                'SD 1': 'SD1',
-                'SD 1.5': 'SD1',
-                'SD 2': 'SD2',
-                'SD 3': 'SD3',
-                'SDXL': 'SDXL',
-                'Pony': 'SDXL',
-                'Illustrious': 'SDXL',
-            }
+            sha256 = f['hashes']['SHA256'].lower()
+            if sha256 not in map: continue
+
+            res = map[sha256]
+            infotags = Path(res['path']).with_suffix('.json')
+
+            trainedWords = ', '.join(r.get('trainedWords', []))
+            baseModel = next((v for k, v in baseList.items() if k in r.get('baseModel', '')), '')
 
             data = {
-                'activation text': ', '.join(r['trainedWords']),
-                'sd version': next((v for k, v in base_model.items() if k in r['baseModel']), ''),
+                'activation text': trainedWords,
+                'sd version': baseModel,
                 'modelId': r['modelId'],
                 'modelVersionId': r['id'],
-                'sha256': h.upper()
+                'sha256': sha256.upper()
             }
 
-            v = [r for r in missing if h.lower() == r['hash']]
-            if len(v) == 0: continue
-            for r in v: Path(r['path']).with_suffix('.json').write_text(json.dumps(data, indent=4), encoding='utf-8')
-            N += 1
+            if infotags.exists():
+                try:
+                    j = json.loads(infotags.read_text(encoding='utf-8'))
+                except Exception:
+                    j = {}
+
+                updated = False
+
+                if 'activation text' not in j:
+                    j['activation text'] = trainedWords
+                    updated = True
+
+                if 'sd version' not in j or j['sd version'] != baseModel:
+                    j['sd version'] = baseModel
+                    updated = True
+
+                if updated:
+                    infotags.write_text(json.dumps(j, indent=4), encoding='utf-8')
+                    N += 1
+            else:
+                infotags.write_text(json.dumps(data, indent=4), encoding='utf-8')
+                N += 1
 
     if N > 0: civitai.log(f'Updated {N} info files')
 
 def load_preview():
-    missing, hashes, results = get_resources('hasPreview')
-    if results is None: return
+    hashes = [r['hash'] for r in civitai.load_resource_list() if r['type'] in types and not r['hasPreview']]
+    results = civitai.get_all_by_hash_with_cache(hashes)
+    if not results: return
 
     N = 0
 
     for r in results:
-        if (r is None): continue
+        if r is None: continue
 
         for f in r['files']:
             if not 'hashes' in f or not 'SHA256' in f['hashes']: continue
-            h = f['hashes']['SHA256']
-            if h.lower() not in hashes: continue
+            sha256 = f['hashes']['SHA256']
+            if sha256.lower() not in hashes: continue
             img = r['images']
             if len(img) == 0: continue
-            p = next((p for p in img if not p['url'].lower().endswith(('.mp4', '.gif'))), None)
-            if p is None: continue
-            url = p['url']
-            civitai.update_resource_preview(h, url)
+            preview = next((p for p in img if not p['url'].lower().endswith(('.mp4', '.gif'))), None)
+            if preview is None: continue
+            url = preview['url']
+            civitai.update_resource_preview(sha256, url)
             N += 1
 
     if N > 0: civitai.log(f'Updated {N} preview images')

@@ -26,38 +26,6 @@ BLUE = '\033[38;5;39m'
 def log(message):
     print(f'{BLUE}●{RST} Civitai: {message}')
 
-def download_file(url, dest, on_progress=None):
-    if os.path.exists(dest): return
-
-    response = requests.get(url, stream=True, headers={"User-Agent": user_agent})
-    total = int(response.headers.get('content-length', 0))
-    start_time = time.time()
-
-    dest = os.path.expanduser(dest)
-    dst_dir = os.path.dirname(dest)
-    f = tempfile.NamedTemporaryFile(delete=False, dir=dst_dir)
-
-    try:
-        current = 0
-        with tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024) as bar:
-            for data in response.iter_content(chunk_size=download_chunk_size):
-                current += len(data)
-                pos = f.write(data)
-                bar.update(pos)
-                if on_progress is not None:
-                    should_stop = on_progress(current, total, start_time)
-                    if should_stop == True:
-                        raise Exception('Download cancelled')
-        f.close()
-        shutil.move(f.name, dest)
-    except OSError as e:
-       print(f"Could not write the preview file to {dst_dir}")
-       print(e)
-    finally:
-        f.close()
-        if os.path.exists(f.name):
-            os.remove(f.name)
-
 def req(endpoint, method='GET', data=None, params=None, headers=None):
     """Make a request to the Civitai API."""
     if headers is None:
@@ -233,9 +201,10 @@ resources = []
 
 def load_resource_list(types=None):
     global resources
-    if types is None:
-        types = ['LORA', 'LoCon', 'Hypernetwork', 'TextualInversion', 'Checkpoint', 'VAE', 'Controlnet', 'Upscaler']
+
+    if types is None: types = ['LORA', 'LoCon', 'Hypernetwork', 'TextualInversion', 'Checkpoint', 'VAE', 'Controlnet', 'Upscaler']
     lora_dir = get_lora_dir()
+
     if 'LORA' in types:
         resources = [r for r in resources if r['type'] != 'LORA']
         resources += get_resources_in_folder('LORA', lora_dir, ['pt', 'safetensors', 'ckpt'])

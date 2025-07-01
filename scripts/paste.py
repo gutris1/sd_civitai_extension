@@ -2,45 +2,20 @@ import json
 import re
 import os
 
-from modules import sd_vae, shared, processing as P
+from modules.script_callbacks import on_infotext_pasted
+from modules import sd_vae, shared
 
 import civitai.lib as civitai
 
-p_infotext = P.create_infotext
+def civitai_hashes(infotext: str):
+    hashify_resources = shared.opts.data.get('civitai_hashify_resources', True)
+    if not hashify_resources: return {}
 
-def insert_infotext(*args, **kwargs):
-    infotext = p_infotext(*args, **kwargs)
-    if not isinstance(infotext, str): return infotext
-    if shared.opts.data.get('civitai_hashify_resources', True):
-        hashes = civitai_hashes(infotext)
-        if hashes: infotext = merge_infotext(infotext, hashes)
-    return infotext
-
-P.create_infotext = insert_infotext
-
-def merge_infotext(infotext, hashtext):
-    hashes = re.search(r'Hashes:\s*(\{.*?\})', infotext)
-    if hashes:
-        try:
-            exhashes = json.loads(hashes.group(1))
-        except json.JSONDecodeError:
-            exhashes = {}
-        exhashes.update(hashtext)
-        merhashes = f'Hashes: {json.dumps(exhashes)}'
-        infotext = re.sub(r'Hashes:\s*\{.*?\}', merhashes, infotext)
-    else:
-        infotext += f', Hashes: {json.dumps(hashtext)}'
-    return infotext
-
-def civitai_hashes(parameters: str) -> dict:
     additional_network_type_map = {'lora': 'LORA', 'hypernet': 'Hypernetwork'}
     additional_network_pattern = r'<(lora|hypernet):([a-zA-Z0-9_\.\-\s]+):([0-9.]+)(?:[:].*)?>'
     model_hash_pattern = r'Model hash: ([0-9a-fA-F]{10})'
 
-    hashify_resources = shared.opts.data.get('civitai_hashify_resources', True)
-    if not hashify_resources: return {}
-
-    parts = parameters.strip().split("\n", 1)
+    parts = infotext.strip().split("\n", 1)
 
     prompt = parts[0].strip()
     rest = parts[1] if len(parts) > 1 else ''
@@ -80,3 +55,29 @@ def civitai_hashes(parameters: str) -> dict:
         if matched: resource_hashes['model'] = matched[0]['hash'][:10]
 
     return resource_hashes
+
+def merge_infotext(infotext, hashtext):
+    hashes = re.search(r'Hashes:\s*(\{.*?\})', infotext)
+    if hashes:
+        try:
+            exhashes = json.loads(hashes.group(1))
+        except json.JSONDecodeError:
+            exhashes = {}
+        exhashes.update(hashtext)
+        merhashes = f'Hashes: {json.dumps(exhashes)}'
+        infotext = re.sub(r'Hashes:\s*\{.*?\}', merhashes, infotext)
+    else:
+        infotext += f', Hashes: {json.dumps(hashtext)}'
+    return infotext
+
+def on_pasted(infotext, params):
+    if not isinstance(infotext, str):
+        return
+
+    if not shared.opts.data.get('civitai_hashify_resources', True):
+        return
+
+    hashes = civitai_hashes(infotext)
+    if hashes: params['parameters'] = merge_infotext(infotext, hashes)
+
+on_infotext_pasted(on_pasted)
