@@ -16,12 +16,11 @@ import io
 
 base_url = 'https://civitai.com/api/v1'
 user_agent = 'CivitaiLink:Automatic1111'
-download_chunk_size = 8192
 civil_ai_api_cache = cache.cache('civil_ai_api_sha256')
-KAGGLE = 'KAGGLE_DATA_PROXY_TOKEN' in os.environ
 
 RST = '\033[0m'
 BLUE = '\033[38;5;39m'
+KAGGLE = 'KAGGLE_DATA_PROXY_TOKEN' in os.environ
 
 resources = []
 
@@ -215,7 +214,7 @@ def download_preview(url, dest_path, on_progress=None):
     try:
         image_data = bytearray()
         current = 0
-        for data in response.iter_content(chunk_size=download_chunk_size):
+        for data in response.iter_content(chunk_size=8192):
             image_data.extend(data)
             current += len(data)
             if on_progress is not None:
