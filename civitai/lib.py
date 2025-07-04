@@ -30,7 +30,7 @@ def log(message):
 def req(endpoint, method='GET', data=None, params=None, headers=None):
     if headers is None: headers = {}
     headers['User-Agent'] = user_agent
-    api_key = shared.opts.data.get("civitai_api_key", None)
+    api_key = shared.opts.data.get('civitai_api_key', None)
     if api_key is not None: headers['Authorization'] = f'Bearer {api_key}'
     if data is not None: headers['Content-Type'] = 'application/json'; data = json.dumps(data)
     if not endpoint.startswith('/'): endpoint = '/' + endpoint
@@ -40,7 +40,7 @@ def req(endpoint, method='GET', data=None, params=None, headers=None):
     return response.json()
 
 def get_all_by_hash(hashes: List[str]):
-    response = req(f"/model-versions/by-hash", method='POST', data=hashes)
+    response = req(f'/model-versions/by-hash', method='POST', data=hashes)
     return response
 
 def get_lora_dir():
@@ -70,7 +70,7 @@ def get_automatic_name(file_type: str, filename: str, folder: str):
 def has_preview(filename: str):
     ui_extra_networks.allowed_preview_extensions()
     preview_exts = ui_extra_networks.allowed_preview_extensions()
-    preview_exts = [*preview_exts, *["preview." + x for x in preview_exts]]
+    preview_exts = [*preview_exts, *['preview.' + x for x in preview_exts]]
     for ext in preview_exts:
         if Path(filename).with_suffix(f'.{ext}').exists(): return True
     return False
@@ -96,7 +96,7 @@ def get_resources_in_folder(file_type, folder, exts=None, exts_exclude=None):
 
             name = f.stem
             automatic_name = get_automatic_name(file_type, str(f), str(folder))
-            file_hash = hashes.sha256(str(f), f"{automatic_type}/{automatic_name}")
+            file_hash = hashes.sha256(str(f), f'{automatic_type}/{automatic_name}')
 
             _resources.append({
                 'type': file_type,
@@ -151,13 +151,13 @@ def load_resource_list(types=None):
     folders = {
         'LORA': Path(get_lora_dir()),
         'LoCon': Path(get_locon_dir()),
-        'Hypernetwork': Path(shared.cmd_opts.hypernetwork_dir),
-        'TextualInversion': Path(shared.cmd_opts.embeddings_dir),
+        'Hypernetwork': Path(getattr(shared.cmd_opts, 'hypernetwork_dir', '')),
+        'TextualInversion': Path(getattr(shared.cmd_opts, 'embeddings_dir', '')),
         'Checkpoint': Path(get_model_dir()),
         'Controlnet': Path(models_path) / 'ControlNet',
         'Upscaler': Path(models_path) / 'ESRGAN',
         'VAE1': Path(get_model_dir()),
-        'VAE2': Path(sd_vae.vae_path),
+        'VAE2': Path(getattr(sd_vae, 'vae_path', '')),
     }
 
     if 'LORA' in types:
@@ -187,11 +187,8 @@ def get_model_by_hash(file_hash: str):
 
 def get_resource_by_hash(hash: str):
     resources = load_resource_list([])
-
     found = [resource for resource in resources if hash.lower() == resource['hash'] and ('downloading' not in resource or resource['downloading'] != True)]
-    if found:
-        return found[0]
-
+    if found: return found[0]
     return None
 
 def resizer(b, size=512):
@@ -207,7 +204,7 @@ def download_preview(url, dest_path, on_progress=None):
     dest = Path(dest_path).expanduser()
     if dest.exists(): return
 
-    response = requests.get(url, stream=True, headers={"User-Agent": user_agent})
+    response = requests.get(url, stream=True, headers={'User-Agent': user_agent})
     total = int(response.headers.get('content-length', 0))
     start_time = time.time()
 
@@ -220,13 +217,12 @@ def download_preview(url, dest_path, on_progress=None):
             if on_progress is not None:
                 should_stop = on_progress(current, total, start_time)
                 if should_stop:
-                    raise Exception("Download cancelled")
+                    raise Exception('Download cancelled')
 
         resized = resizer(image_data)
 
         if KAGGLE:
             import sd_image_encryption # type: ignore
-
             img = Image.open(resized)
             imginfo = img.info or {}
             if not all(k in imginfo for k in ['Encrypt', 'EncryptPwdSha']):
@@ -235,7 +231,7 @@ def download_preview(url, dest_path, on_progress=None):
             dest.write_bytes(resized.read())
 
     except Exception as e:
-        print(f"Preview failed: {dest} : {e}")
+        print(f'Preview failed: {dest} : {e}')
         if dest.exists():
             dest.unlink()
 

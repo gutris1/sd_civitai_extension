@@ -1,8 +1,7 @@
+from modules import sd_vae, shared, processing as P
 import json
 import re
 import os
-
-from modules import sd_vae, shared, processing as P
 
 import civitai.lib as civitai
 

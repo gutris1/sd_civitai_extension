@@ -1,10 +1,9 @@
+from modules.script_callbacks import on_app_started, on_ui_settings
+from modules import sd_vae, shared
 from pathlib import Path
 import gradio as gr
 import threading
 import json
-
-from modules.script_callbacks import on_app_started, on_ui_settings
-from modules import sd_vae, shared
 
 import civitai.lib as civitai
 
