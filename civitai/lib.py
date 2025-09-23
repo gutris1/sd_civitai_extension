@@ -51,7 +51,11 @@ def get_locon_dir():
     except AttributeError: return get_lora_dir()
 
 def get_model_dir():
-    return shared.cmd_opts.ckpt_dir or sd_models.model_path
+    return (
+        getattr(shared.cmd_opts, 'ckpt_dir', None)
+        or getattr(shared.cmd_opts, 'ckpt_dirs', None)
+        or sd_models.model_path
+    )
 
 def get_automatic_type(file_type: str):
     if file_type == 'Hypernetwork': return 'hypernet'
